@@ -38,7 +38,8 @@ import hero5 from '../assets/youth5.jpg';
 import hero6 from '../assets/youth6.jpg';
 import hero7 from '../assets/youth7.jpg';
 
-const API_URL = 'http://localhost:8000/api';
+const API_URL =
+  import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 const carouselImages = [
   hero1, hero2, hero3, hero4, hero5, hero6, hero7,

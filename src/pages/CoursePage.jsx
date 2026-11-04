@@ -387,6 +387,7 @@ const Courses = () => {
               <div className="space-y-5">
                 {displayedWeeks.map((item) => {
                   const isLocked = item.isLocked;
+                  console.log(isLocked)
                   const isCompleted = completedWeeks.includes(item.week);
                   const hasSubmission = !!submissions[item.week];
 
