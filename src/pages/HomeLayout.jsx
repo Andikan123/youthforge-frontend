@@ -4,11 +4,12 @@ import Navbar from '../components/Navbar';
 const HomeLayout = () => {
   return (
     <>
-      <nav>
-       <Navbar/>
-      </nav>
-      <Outlet />
+      <Navbar />
+      <main className="pt-20">
+        <Outlet />
+      </main>
     </>
   );
 };
+
 export default HomeLayout;

@@ -1531,7 +1531,7 @@ const Landing = () => {
         </span>
 
         <h3 className="text-3xl font-extrabold text-white mt-3">
-          Dr Andikan William
+          Andikan William
         </h3>
 
         <p className="text-white/75 mt-2">

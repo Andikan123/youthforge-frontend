@@ -1,3 +1,4 @@
+
 import { useEffect, useState, useCallback, useRef } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 
@@ -15,33 +16,48 @@ import {
   FaXmark,
 } from "react-icons/fa6";
 
-const API_URL = "http://localhost:8000/api";
+// API CONFIGURATION
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
 const Navbar = () => {
   const navigate = useNavigate();
-  const notificationRef = useRef(null);
 
+  const notificationRef = useRef(null);
+  const userRequestRef = useRef(0);
+  const notificationRequestRef = useRef(0);
+  const notificationAbortRef = useRef(null);
+  const markingRef = useRef(new Set());
+
+  // AUTHENTICATION STATES
   const [user, setUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
-  // Notification states
+  // NOTIFICATION STATES
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
 
+  // NAVIGATION LINKS
   const navLinks = [
     { to: "/", label: "Home", end: true },
     { to: "/about", label: "About" },
     { to: "/courses", label: "Courses" },
   ];
 
-  // Fetch logged-in user
+  // ==========================================
+  // AUTHENTICATION
+  // ==========================================
+
   const fetchUser = useCallback(async () => {
+    const requestId = ++userRequestRef.current;
     const token = localStorage.getItem("token");
 
     if (!token) {
       setUser(null);
+      setNotifications([]);
+      setUnreadCount(0);
       setLoadingUser(false);
       return;
     }
@@ -53,12 +69,21 @@ const Navbar = () => {
         },
       });
 
+      // Ignore outdated requests
+      if (requestId !== userRequestRef.current) return;
+
+      // Check whether the token is still the same
+      if (localStorage.getItem("token") !== token) return;
+
       if (response.status === 401) {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
+
         setUser(null);
         setNotifications([]);
         setUnreadCount(0);
+        setNotificationOpen(false);
+
         return;
       }
 
@@ -67,34 +92,83 @@ const Navbar = () => {
       }
 
       const data = await response.json();
+
+      if (requestId !== userRequestRef.current) return;
+
       setUser(data.user || data);
     } catch (error) {
-      console.error("User authentication error:", error);
+      if (requestId === userRequestRef.current) {
+        console.error("User authentication error:", error);
+      }
     } finally {
-      setLoadingUser(false);
+      if (requestId === userRequestRef.current) {
+        setLoadingUser(false);
+      }
     }
   }, []);
 
-  // Fetch notifications from backend
+  // INITIAL AUTHENTICATION AND AUTH EVENTS
+  useEffect(() => {
+    let active = true;
+
+    const initializeAuth = () => {
+      if (active) {
+        fetchUser();
+      }
+    };
+
+    const handleAuthChange = () => {
+      fetchUser();
+    };
+
+    window.addEventListener("authChanged", handleAuthChange);
+    window.addEventListener("storage", handleAuthChange);
+
+    // Schedule initial authentication outside the effect body
+    Promise.resolve().then(initializeAuth);
+
+    return () => {
+      active = false;
+      userRequestRef.current += 1;
+
+      window.removeEventListener("authChanged", handleAuthChange);
+      window.removeEventListener("storage", handleAuthChange);
+    };
+  }, [fetchUser]);
+
+  // ==========================================
+  // NOTIFICATIONS
+  // ==========================================
+
   const fetchNotifications = useCallback(async () => {
     const token = localStorage.getItem("token");
 
     if (!token || !user) return;
 
+    const requestId = ++notificationRequestRef.current;
+
+    // Cancel any outdated notification request
+    notificationAbortRef.current?.abort();
+
+    const controller = new AbortController();
+    notificationAbortRef.current = controller;
+
     setLoadingNotifications(true);
 
     try {
+      const headers = {
+        Authorization: `Bearer ${token}`,
+      };
+
       const [notificationResponse, countResponse] = await Promise.all([
         fetch(`${API_URL}/notifications`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers,
+          signal: controller.signal,
         }),
 
         fetch(`${API_URL}/notifications/unread-count`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers,
+          signal: controller.signal,
         }),
       ]);
 
@@ -105,45 +179,65 @@ const Navbar = () => {
       const notificationData = await notificationResponse.json();
       const countData = await countResponse.json();
 
-      setNotifications(notificationData.notifications || []);
-      setUnreadCount(countData.unreadCount || 0);
+      if (
+        controller.signal.aborted ||
+        requestId !== notificationRequestRef.current ||
+        localStorage.getItem("token") !== token
+      ) {
+        return;
+      }
+
+      setNotifications(
+        Array.isArray(notificationData.notifications)
+          ? notificationData.notifications
+          : []
+      );
+
+      setUnreadCount(Math.max(0, Number(countData.unreadCount) || 0));
     } catch (error) {
-      console.error("Notification error:", error);
+      if (error.name !== "AbortError") {
+        console.error("Notification error:", error);
+      }
     } finally {
-      setLoadingNotifications(false);
+      if (requestId === notificationRequestRef.current) {
+        setLoadingNotifications(false);
+      }
     }
   }, [user]);
 
-  // Initial authentication and navbar events
+  // FETCH NOTIFICATIONS WHEN AUTHENTICATED
   useEffect(() => {
-    fetchUser();
+    if (!user) return;
 
-    window.addEventListener("authChanged", fetchUser);
-    window.addEventListener("storage", fetchUser);
+    let active = true;
+
+    // Schedule the first fetch outside the effect body
+    Promise.resolve().then(() => {
+      if (active) {
+        fetchNotifications();
+      }
+    });
+
+    // Refresh every 30 seconds
+    const interval = setInterval(() => {
+      if (active) {
+        fetchNotifications();
+      }
+    }, 30000);
 
     return () => {
-      window.removeEventListener("authChanged", fetchUser);
-      window.removeEventListener("storage", fetchUser);
+      active = false;
+      clearInterval(interval);
+
+      notificationAbortRef.current?.abort();
+      notificationRequestRef.current += 1;
     };
-  }, [fetchUser]);
-
-  // Fetch notifications when user is authenticated
-  useEffect(() => {
-    if (!user) {
-      setNotifications([]);
-      setUnreadCount(0);
-      return;
-    }
-
-    fetchNotifications();
-
-    // Refresh notifications every 30 seconds
-    const interval = setInterval(fetchNotifications, 30000);
-
-    return () => clearInterval(interval);
   }, [user, fetchNotifications]);
 
-  // Close dropdown when clicking outside
+  // ==========================================
+  // CLOSE DROPDOWN WHEN CLICKING OUTSIDE
+  // ==========================================
+
   useEffect(() => {
     const handleOutsideClick = (event) => {
       if (
@@ -161,24 +255,51 @@ const Navbar = () => {
     };
   }, []);
 
-  // Sign out
+  // ==========================================
+  // LOGOUT
+  // ==========================================
+
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+
+    // Invalidate pending requests
+    userRequestRef.current += 1;
+    notificationRequestRef.current += 1;
+
+    notificationAbortRef.current?.abort();
 
     setUser(null);
     setNotifications([]);
     setUnreadCount(0);
     setNotificationOpen(false);
+    setLoadingNotifications(false);
+
+    markingRef.current.clear();
 
     window.dispatchEvent(new Event("authChanged"));
 
     navigate("/login", { replace: true });
   };
 
-  // Mark individual notification as read
+  // ==========================================
+  // MARK NOTIFICATION AS READ
+  // ==========================================
+
   const markAsRead = async (notificationId) => {
     const token = localStorage.getItem("token");
+
+    if (!token || markingRef.current.has(notificationId)) {
+      return false;
+    }
+
+    const target = notifications.find(
+      (notification) => notification._id === notificationId
+    );
+
+    if (!target || target.isRead) return true;
+
+    markingRef.current.add(notificationId);
 
     try {
       const response = await fetch(
@@ -188,7 +309,7 @@ const Navbar = () => {
           headers: {
             Authorization: `Bearer ${token}`,
           },
-        },
+        }
       );
 
       if (!response.ok) {
@@ -199,27 +320,41 @@ const Navbar = () => {
         previous.map((notification) =>
           notification._id === notificationId
             ? { ...notification, isRead: true }
-            : notification,
-        ),
+            : notification
+        )
       );
 
+      // Decrease only once
       setUnreadCount((previous) => Math.max(0, previous - 1));
+
+      return true;
     } catch (error) {
       console.error("Mark as read error:", error);
+      return false;
+    } finally {
+      markingRef.current.delete(notificationId);
     }
   };
 
-  // Mark all notifications as read
+  // ==========================================
+  // MARK ALL NOTIFICATIONS AS READ
+  // ==========================================
+
   const markAllAsRead = async () => {
     const token = localStorage.getItem("token");
 
+    if (!token || unreadCount === 0) return;
+
     try {
-      const response = await fetch(`${API_URL}/notifications/read-all`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await fetch(
+        `${API_URL}/notifications/read-all`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
 
       if (!response.ok) {
         throw new Error("Could not mark notifications as read");
@@ -229,7 +364,7 @@ const Navbar = () => {
         previous.map((notification) => ({
           ...notification,
           isRead: true,
-        })),
+        }))
       );
 
       setUnreadCount(0);
@@ -238,7 +373,10 @@ const Navbar = () => {
     }
   };
 
-  // Open notification and navigate
+  // ==========================================
+  // OPEN NOTIFICATION
+  // ==========================================
+
   const handleNotificationClick = async (notification) => {
     if (!notification.isRead) {
       await markAsRead(notification._id);
@@ -253,7 +391,10 @@ const Navbar = () => {
     }
   };
 
-  // Notification icons
+  // ==========================================
+  // NOTIFICATION ICONS
+  // ==========================================
+
   const getNotificationIcon = (type) => {
     switch (type) {
       case "assignment":
@@ -270,6 +411,7 @@ const Navbar = () => {
     }
   };
 
+  // NOTIFICATION COLORS
   const getNotificationColor = (type) => {
     switch (type) {
       case "assignment":
@@ -286,11 +428,17 @@ const Navbar = () => {
     }
   };
 
-  // Time formatting
-  const timeAgo = (date) => {
-    const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  // ==========================================
+  // TIME FORMATTING
+  // ==========================================
 
-    if (!Number.isFinite(seconds) || seconds < 0) return "Just now";
+  const timeAgo = (date) => {
+    const timestamp = new Date(date).getTime();
+
+    if (!Number.isFinite(timestamp)) return "Just now";
+
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+
     if (seconds < 60) return "Just now";
 
     const minutes = Math.floor(seconds / 60);
@@ -305,6 +453,10 @@ const Navbar = () => {
     return new Date(date).toLocaleDateString();
   };
 
+  // ==========================================
+  // USER DISPLAY INFORMATION
+  // ==========================================
+
   const displayName =
     [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
     user?.name ||
@@ -315,9 +467,15 @@ const Navbar = () => {
 
   const userInitial = displayName.charAt(0).toUpperCase();
 
+  // ==========================================
+  // NAVBAR UI
+  // ==========================================
+
   return (
-    <nav className=" top-0 z-50 border-b border-white/[0.08] bg-[#0B0D1A]/90 text-white shadow-[0_8px_40px_rgba(0,0,0,0.15)] backdrop-blur-2xl fixed top-0 left-0 z-50 w-full ">
+    <nav className="fixed top-0 left-0 z-50 w-full border-b border-white/[0.08] bg-[#0B0D1A]/90 text-white shadow-[0_8px_40px_rgba(0,0,0,0.15)] backdrop-blur-2xl">
+
       <div className="navbar mx-auto min-h-[76px] max-w-7xl px-5 sm:px-8">
+
         {/* BRAND */}
         <div className="navbar-start">
           <NavLink to="/" className="group flex flex-col leading-tight">
@@ -345,7 +503,9 @@ const Navbar = () => {
                   end={end}
                   className={({ isActive }) =>
                     `relative py-2 text-[13px] font-medium tracking-wide transition-colors duration-200 ${
-                      isActive ? "text-white" : "text-white/50 hover:text-white"
+                      isActive
+                        ? "text-white"
+                        : "text-white/50 hover:text-white"
                     }`
                   }
                 >
@@ -366,11 +526,13 @@ const Navbar = () => {
         </div>
 
         {/* ACTIONS */}
-        <div className="navbar-end gap-3">
+        <div className="navbar-end gap-2 sm:gap-3">
+
           {!loadingUser && (
             <>
               {!user ? (
                 <>
+                  {/* LOGIN */}
                   <NavLink
                     to="/login"
                     className="hidden px-3 py-2 text-[13px] font-medium text-white/60 transition-colors hover:text-white sm:inline-flex"
@@ -378,6 +540,7 @@ const Navbar = () => {
                     Log in
                   </NavLink>
 
+                  {/* REGISTER */}
                   <NavLink
                     to="/register"
                     className="group relative hidden items-center justify-center overflow-hidden rounded-lg bg-violet-500 px-5 py-2.5 text-[13px] font-semibold text-white shadow-[0_0_24px_rgba(139,92,246,0.18)] transition-all duration-300 hover:bg-violet-400 sm:inline-flex"
@@ -390,7 +553,7 @@ const Navbar = () => {
                 </>
               ) : (
                 <>
-                  {/* USER WELCOME */}
+                  {/* WELCOME MESSAGE - DESKTOP */}
                   <div className="hidden items-center gap-2.5 rounded-full border border-white/10 bg-white/[0.05] px-4 py-2 transition hover:border-violet-400/30 hover:bg-violet-500/[0.08] sm:flex">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-500/20 text-sm font-bold text-violet-300">
                       {userInitial}
@@ -407,7 +570,7 @@ const Navbar = () => {
                     </div>
                   </div>
 
-                  {/* PROFILE */}
+                  {/* PROFILE - ALWAYS VISIBLE */}
                   <NavLink
                     to="/dashboard/profile"
                     aria-label="My profile"
@@ -425,13 +588,13 @@ const Navbar = () => {
                     )}
                   </NavLink>
 
-                  {/* SIGN OUT */}
+                  {/* SIGN OUT - DESKTOP */}
                   <button
                     type="button"
                     onClick={handleLogout}
                     aria-label="Sign out"
                     title="Sign out"
-                    className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-white/70 transition hover:border-red-400/40 hover:bg-red-500/10 hover:text-red-400"
+                    className="hidden h-10 w-10 items-center justify-center rounded-full border border-white/10 text-white/70 transition hover:border-red-400/40 hover:bg-red-500/10 hover:text-red-400 sm:flex"
                   >
                     <FaArrowRightFromBracket className="text-lg" />
                   </button>
@@ -443,11 +606,13 @@ const Navbar = () => {
           {/* NOTIFICATION DROPDOWN */}
           {!loadingUser && user && (
             <div className="relative" ref={notificationRef}>
+
               {/* BELL BUTTON */}
               <button
                 type="button"
                 onClick={() => {
                   const nextOpen = !notificationOpen;
+
                   setNotificationOpen(nextOpen);
 
                   if (nextOpen) {
@@ -474,6 +639,7 @@ const Navbar = () => {
               {/* DROPDOWN PANEL */}
               {notificationOpen && (
                 <div className="absolute right-0 top-[calc(100%+16px)] z-[100] w-[calc(100vw-32px)] max-w-[390px] overflow-hidden rounded-2xl border border-white/10 bg-[#111426] shadow-[0_25px_80px_rgba(0,0,0,0.55)] animate-in fade-in slide-in-from-top-2 duration-200">
+
                   {/* HEADER */}
                   <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
                     <div>
@@ -516,9 +682,11 @@ const Navbar = () => {
 
                   {/* NOTIFICATION LIST */}
                   <div className="max-h-[390px] overflow-y-auto">
+
                     {loadingNotifications && notifications.length === 0 ? (
                       <div className="flex flex-col items-center gap-3 py-12">
-                        <span className="loading loading-spinner loading-md text-violet-400"></span>
+                        <span className="loading loading-spinner loading-md text-violet-400" />
+
                         <p className="text-xs text-white/40">
                           Loading notifications...
                         </p>
@@ -542,15 +710,19 @@ const Navbar = () => {
                         <button
                           type="button"
                           key={notification._id}
-                          onClick={() => handleNotificationClick(notification)}
+                          onClick={() =>
+                            handleNotificationClick(notification)
+                          }
                           className={`group flex w-full items-start gap-3 border-b border-white/[0.05] px-5 py-4 text-left transition hover:bg-white/[0.04] ${
-                            !notification.isRead ? "bg-violet-500/[0.035]" : ""
+                            !notification.isRead
+                              ? "bg-violet-500/[0.035]"
+                              : ""
                           }`}
                         >
                           {/* TYPE ICON */}
                           <div
                             className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm ${getNotificationColor(
-                              notification.type,
+                              notification.type
                             )}`}
                           >
                             {getNotificationIcon(notification.type)}
@@ -608,6 +780,7 @@ const Navbar = () => {
 
           {/* MOBILE MENU */}
           <div className="dropdown dropdown-end lg:hidden">
+
             <button
               type="button"
               tabIndex={0}
@@ -621,6 +794,8 @@ const Navbar = () => {
               tabIndex={0}
               className="menu dropdown-content z-[60] mt-4 w-60 gap-1 rounded-xl border border-white/10 bg-[#111426] p-3 text-white shadow-[0_20px_60px_rgba(0,0,0,0.4)]"
             >
+
+              {/* USER GREETING */}
               {user && (
                 <li className="mb-2 border-b border-white/10 pb-3">
                   <span className="font-semibold text-violet-300">
@@ -629,6 +804,7 @@ const Navbar = () => {
                 </li>
               )}
 
+              {/* NAVIGATION LINKS */}
               {navLinks.map(({ to, label, end }) => (
                 <li key={to}>
                   <NavLink to={to} end={end}>
@@ -637,10 +813,13 @@ const Navbar = () => {
                 </li>
               ))}
 
+              {/* LOGGED OUT */}
               {!user ? (
                 <>
                   <li>
-                    <NavLink to="/login">Log in</NavLink>
+                    <NavLink to="/login">
+                      Log in
+                    </NavLink>
                   </li>
 
                   <li className="mt-2 border-t border-white/10 pt-2">
@@ -653,13 +832,19 @@ const Navbar = () => {
                   </li>
                 </>
               ) : (
+
+                /* LOGGED IN */
                 <>
                   <li>
-                    <NavLink to="/dashboard/profile">My Profile</NavLink>
+                    <NavLink to="/dashboard/profile">
+                      <FaRegCircleUser />
+                      My Profile
+                    </NavLink>
                   </li>
 
                   <li>
                     <NavLink to="/notifications">
+                      <FaBell />
                       Notifications ({unreadCount})
                     </NavLink>
                   </li>
@@ -676,8 +861,10 @@ const Navbar = () => {
                   </li>
                 </>
               )}
+
             </ul>
           </div>
+
         </div>
       </div>
     </nav>

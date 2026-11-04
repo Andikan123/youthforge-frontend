@@ -15,7 +15,8 @@ import {
   FaXmark,
 } from 'react-icons/fa6';
 
-const API_URL = 'http://localhost:8000/api';
+const API_URL =
+  import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 const Profile = () => {
   const navigate = useNavigate();

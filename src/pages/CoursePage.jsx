@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import {
   FaBookOpen,
@@ -7,9 +8,11 @@ import {
   FaCode,
   FaRegCircle,
   FaExternalLinkAlt,
+  FaLock,
 } from "react-icons/fa";
 
-const API_URL = import.meta.env.VITE_API_URL;
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
 const Courses = () => {
   const [weeks, setWeeks] = useState([]);
@@ -27,6 +30,8 @@ const Courses = () => {
 
   // Fetch course curriculum and assignments
   useEffect(() => {
+    let active = true;
+
     const fetchCourse = async () => {
       try {
         setLoading(true);
@@ -41,7 +46,7 @@ const Courses = () => {
         const courseData = await courseResponse.json();
 
         const course = courseData.courses?.find(
-          (item) => item.title === "Web Development",
+          (item) => item.title === "Web Development"
         );
 
         if (!course) {
@@ -49,7 +54,7 @@ const Courses = () => {
         }
 
         const assignmentResponse = await fetch(
-          `${API_URL}/assignments/course/${course._id}`,
+          `${API_URL}/assignments/course/${course._id}`
         );
 
         if (!assignmentResponse.ok) {
@@ -61,19 +66,23 @@ const Courses = () => {
         const courseWeeks = (course.weeks || [])
           .map((week) => {
             const assignment = assignmentData.assignments?.find(
-              (item) => item.weekNumber === week.weekNumber,
+              (item) => item.weekNumber === week.weekNumber
             );
 
             return {
               ...week,
               week: week.weekNumber,
-              assignment: assignment?.description || "Assignment coming soon.",
+              assignment:
+                assignment?.description || "Assignment coming soon.",
               assignmentId: assignment?._id || null,
               assignmentTitle:
-                assignment?.title || `Week ${week.weekNumber} Assignment`,
+                assignment?.title ||
+                `Week ${week.weekNumber} Assignment`,
             };
           })
           .sort((a, b) => a.week - b.week);
+
+        if (!active) return;
 
         setWeeks(courseWeeks);
 
@@ -87,10 +96,13 @@ const Courses = () => {
               headers: {
                 Authorization: `Bearer ${token}`,
               },
-            },
+            }
           );
 
-          if (submissionResponse.ok) {
+          if (submissionResponse.status === 401) {
+            localStorage.removeItem("token");
+            localStorage.removeItem("user");
+          } else if (submissionResponse.ok) {
             const submissionData = await submissionResponse.json();
             const savedSubmissions = {};
 
@@ -109,22 +121,36 @@ const Courses = () => {
               }
             });
 
-            setSubmissions(savedSubmissions);
+            if (active) {
+              setSubmissions(savedSubmissions);
+            }
           }
         }
       } catch (err) {
         console.error("Course loading error:", err);
-        setError(err.message || "Something went wrong.");
+
+        if (active) {
+          setError(err.message || "Something went wrong.");
+        }
       } finally {
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     };
 
     fetchCourse();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Open assignment modal
   const openAssignment = (item) => {
+    // Only Week 1 is currently available
+    if (item.week !== 1) return;
+
     setActiveAssignment(item);
     setSubmissionText(submissions[item.week]?.text || "");
     setProjectLink(submissions[item.week]?.projectLink || "");
@@ -133,6 +159,8 @@ const Courses = () => {
 
   // Close assignment modal
   const closeAssignment = () => {
+    if (submitting) return;
+
     setActiveAssignment(null);
     setSubmissionText("");
     setProjectLink("");
@@ -143,7 +171,11 @@ const Courses = () => {
   const handleAssignmentSubmit = async (e) => {
     e.preventDefault();
 
-    if (!activeAssignment?.assignmentId) {
+    if (!activeAssignment || activeAssignment.week !== 1) {
+      return;
+    }
+
+    if (!activeAssignment.assignmentId) {
       alert("This assignment is not available yet.");
       return;
     }
@@ -159,10 +191,10 @@ const Courses = () => {
       return;
     }
 
-    // Actual file upload is not connected yet.
+    // File uploads are not connected yet
     if (selectedFile) {
       alert(
-        "File uploads are not connected yet. Please submit your work using the text field or a project link for now.",
+        "File uploads are not connected yet. Please submit your work using the text field or a project link for now."
       );
 
       if (!submissionText.trim() && !projectLink.trim()) {
@@ -185,10 +217,16 @@ const Courses = () => {
             submissionText,
             projectLink,
           }),
-        },
+        }
       );
 
       const data = await response.json();
+
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        throw new Error("Your session has expired. Please log in again.");
+      }
 
       if (!response.ok) {
         throw new Error(data.message || "Submission failed.");
@@ -205,7 +243,10 @@ const Courses = () => {
         },
       }));
 
-      closeAssignment();
+      setActiveAssignment(null);
+      setSubmissionText("");
+      setProjectLink("");
+      setSelectedFile(null);
     } catch (err) {
       console.error("Submission error:", err);
       alert(err.message || "Could not submit assignment.");
@@ -216,12 +257,12 @@ const Courses = () => {
 
   // Mark week complete only after assignment submission
   const toggleComplete = (week) => {
-    if (!submissions[week]) return;
+    if (week !== 1 || !submissions[week]) return;
 
     setCompletedWeeks((previous) =>
       previous.includes(week)
         ? previous.filter((item) => item !== week)
-        : [...previous, week],
+        : [...previous, week]
     );
   };
 
@@ -229,9 +270,12 @@ const Courses = () => {
     ? Math.round((completedWeeks.length / weeks.length) * 100)
     : 0;
 
+  const displayedWeeks = weeks;
+
   return (
     <main className="min-h-screen bg-white px-4 py-10 text-gray-900 sm:px-6 lg:py-16">
       <div className="mx-auto max-w-4xl">
+
         {/* Loading */}
         {loading && (
           <div className="py-20 text-center">
@@ -269,8 +313,8 @@ const Courses = () => {
 
               <p className="mt-4 max-w-2xl leading-7 text-gray-600">
                 Learn HTML, CSS and JavaScript step by step. Complete your
-                weekly assignments and track your progress as you develop your
-                coding skills.
+                weekly assignments and track your progress as you develop
+                your coding skills.
               </p>
 
               <div className="mt-6 flex flex-wrap gap-4 text-sm text-gray-500">
@@ -295,7 +339,9 @@ const Courses = () => {
             <section className="mb-10 rounded-2xl border border-gray-200 bg-gray-50 p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm text-gray-500">Your course progress</p>
+                  <p className="text-sm text-gray-500">
+                    Your course progress
+                  </p>
 
                   <p className="mt-2 text-2xl font-bold text-gray-900">
                     {completedWeeks.length}
@@ -339,7 +385,8 @@ const Courses = () => {
               </div>
 
               <div className="space-y-5">
-                {weeks.map((item) => {
+                {displayedWeeks.map((item) => {
+                  const isLocked = item.isLocked;
                   const isCompleted = completedWeeks.includes(item.week);
                   const hasSubmission = !!submissions[item.week];
 
@@ -347,21 +394,27 @@ const Courses = () => {
                     <article
                       key={item.week}
                       className={`rounded-2xl border p-5 transition-colors sm:p-6 ${
-                        isCompleted
-                          ? "border-violet-300 bg-violet-50"
-                          : "border-gray-200 bg-white hover:border-violet-200 hover:shadow-sm"
+                        isLocked
+                          ? "border-gray-200 bg-gray-50 opacity-70"
+                          : isCompleted
+                            ? "border-violet-300 bg-violet-50"
+                            : "border-gray-200 bg-white hover:border-violet-200 hover:shadow-sm"
                       }`}
                     >
                       {/* Week heading */}
                       <div className="flex items-start gap-4">
                         <div
                           className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold ${
-                            isCompleted
-                              ? "bg-violet-600 text-white"
-                              : "bg-violet-50 text-violet-700"
+                            isLocked
+                              ? "bg-gray-200 text-gray-500"
+                              : isCompleted
+                                ? "bg-violet-600 text-white"
+                                : "bg-violet-50 text-violet-700"
                           }`}
                         >
-                          {isCompleted ? (
+                          {isLocked ? (
+                            <FaLock />
+                          ) : isCompleted ? (
                             <FaCheck />
                           ) : (
                             String(item.week).padStart(2, "0")
@@ -374,9 +427,18 @@ const Courses = () => {
                               Week {item.week}
                             </p>
 
-                            <span className="rounded-md bg-gray-100 px-2 py-1 text-[10px] font-bold uppercase text-gray-600">
-                              {item.subject}
-                            </span>
+                            {item.subject && (
+                              <span className="rounded-md bg-gray-100 px-2 py-1 text-[10px] font-bold uppercase text-gray-600">
+                                {item.subject}
+                              </span>
+                            )}
+
+                            {isLocked && (
+                              <span className="flex items-center gap-1 rounded-md bg-gray-200 px-2 py-1 text-[10px] font-bold uppercase text-gray-600">
+                                <FaLock />
+                                Coming soon
+                              </span>
+                            )}
                           </div>
 
                           <h3 className="mt-1 text-lg font-semibold text-gray-900">
@@ -384,158 +446,164 @@ const Courses = () => {
                           </h3>
 
                           <p className="mt-2 text-sm leading-6 text-gray-600">
-                            {item.description}
+                            {isLocked
+                              ? "This week will become available when the programme progresses."
+                              : item.description}
                           </p>
                         </div>
                       </div>
 
-                      {/* Topics */}
-                      <div className="mt-6 border-t border-gray-100 pt-5">
-                        <p className="text-sm font-semibold text-gray-900">
-                          Topics covered
-                        </p>
+                      {/* Topics and learning materials: Week 1 only */}
+                      {!isLocked && (
+                        <>
+                          {/* Topics */}
+                          <div className="mt-6 border-t border-gray-100 pt-5">
+                            <p className="text-sm font-semibold text-gray-900">
+                              Topics covered
+                            </p>
 
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {(item.topics || []).map((topic) => (
-                            <span
-                              key={topic}
-                              className="rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600"
-                            >
-                              {topic}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {(item.topics || []).map((topic) => (
+                                <span
+                                  key={topic}
+                                  className="rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600"
+                                >
+                                  {topic}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
 
-                      {/* Learning materials */}
+                          {/* Learning materials */}
+                          <div className="mt-6 border-t border-gray-100 pt-5">
+                            <p className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                              <FaBookOpen className="text-violet-600" />
+                              Learning materials
+                            </p>
 
-                      {/* Learning materials */}
-                      <div className="mt-6 border-t border-gray-100 pt-5">
-                        <p className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-                          <FaBookOpen className="text-violet-600" />
-                          Learning materials
-                        </p>
+                            <p className="mt-2 text-sm leading-6 text-gray-600">
+                              {item.material}
+                            </p>
 
-                        <p className="mt-2 text-sm leading-6 text-gray-600">
-                          {item.material}
-                        </p>
+                            {(item.resources || []).map((resource) => (
+                              <div
+                                key={resource.title}
+                                className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-gray-200 p-3"
+                              >
+                                <div>
+                                  <p className="text-sm font-medium text-gray-800">
+                                    {resource.title}
+                                  </p>
 
-                        {(item.resources || []).map((resource) => (
-                          <div
-                            key={resource.title}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 p-3"
+                                  <p className="mt-1 text-xs text-gray-400">
+                                    {resource.provider}
+                                  </p>
+                                </div>
+
+                                {resource.url ? (
+                                  <a
+                                    href={resource.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex shrink-0 items-center gap-2 text-xs font-semibold text-violet-600 hover:text-violet-800"
+                                  >
+                                    Open lesson
+                                    <FaExternalLinkAlt />
+                                  </a>
+                                ) : (
+                                  <span className="text-xs text-red-500">
+                                    URL missing
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Assignment */}
+                          <button
+                            type="button"
+                            onClick={() => openAssignment(item)}
+                            disabled={!item.assignmentId}
+                            className="mt-5 w-full rounded-xl border border-violet-100 bg-violet-50 p-4 text-left transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            <div>
-                              <p className="text-sm font-medium text-gray-800">
-                                {resource.title}
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="flex items-center gap-2 text-sm font-semibold text-violet-800">
+                                <FaCode />
+                                {item.assignmentTitle}
                               </p>
 
-                              <p className="mt-1 text-xs text-gray-400">
-                                {resource.provider}
-                              </p>
+                              {hasSubmission ? (
+                                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                                  Submitted
+                                </span>
+                              ) : (
+                                <span className="text-xs font-semibold text-violet-700">
+                                  Submit assignment →
+                                </span>
+                              )}
                             </div>
 
-                            {resource.url ? (
-                              <a
-                                href={resource.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex shrink-0 items-center gap-2 text-xs font-semibold text-violet-600 hover:text-violet-800"
-                              >
-                                Open lesson
-                                <FaExternalLinkAlt />
-                              </a>
-                            ) : (
-                              <span className="text-xs text-red-500">
-                                URL missing
-                              </span>
-                            )}
+                            <p className="mt-2 text-sm leading-6 text-gray-700">
+                              {item.assignment}
+                            </p>
+
+                            <p className="mt-3 text-xs font-medium text-violet-700">
+                              {hasSubmission
+                                ? "View or update your submission"
+                                : "Click to read instructions and submit your work"}
+                            </p>
+                          </button>
+
+                          {/* Completion */}
+                          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                            <span
+                              className={`text-sm font-medium ${
+                                isCompleted
+                                  ? "text-emerald-600"
+                                  : hasSubmission
+                                    ? "text-blue-600"
+                                    : "text-gray-500"
+                              }`}
+                            >
+                              {isCompleted
+                                ? "Week completed"
+                                : hasSubmission
+                                  ? "Assignment submitted"
+                                  : "Assignment submission required"}
+                            </span>
+
+                            <button
+                              type="button"
+                              disabled={!hasSubmission && !isCompleted}
+                              onClick={() => toggleComplete(item.week)}
+                              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
+                                isCompleted
+                                  ? "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                  : hasSubmission
+                                    ? "bg-violet-600 text-white hover:bg-violet-700"
+                                    : "cursor-not-allowed bg-gray-100 text-gray-400"
+                              }`}
+                            >
+                              {isCompleted ? (
+                                <>
+                                  <FaRegCircle />
+                                  Mark incomplete
+                                </>
+                              ) : hasSubmission ? (
+                                <>
+                                  <FaCheck />
+                                  Mark as completed
+                                </>
+                              ) : (
+                                <>
+                                  <FaClock />
+                                  Submit assignment first
+                                </>
+                              )}
+                            </button>
                           </div>
-                        ))}
-                      </div>
-
-                      {/* Assignment */}
-                      <button
-                        type="button"
-                        onClick={() => openAssignment(item)}
-                        className="mt-5 w-full rounded-xl border border-violet-100 bg-violet-50 p-4 text-left transition hover:border-violet-300 hover:bg-violet-100"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="flex items-center gap-2 text-sm font-semibold text-violet-800">
-                            <FaCode />
-                            {item.assignmentTitle}
-                          </p>
-
-                          {hasSubmission ? (
-                            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                              Submitted
-                            </span>
-                          ) : (
-                            <span className="text-xs font-semibold text-violet-700">
-                              Submit assignment →
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="mt-2 text-sm leading-6 text-gray-700">
-                          {item.assignment}
-                        </p>
-
-                        <p className="mt-3 text-xs font-medium text-violet-700">
-                          {hasSubmission
-                            ? "View or update your submission"
-                            : "Click to read instructions and submit your work"}
-                        </p>
-                      </button>
-
-                      {/* Completion */}
-                      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-                        <span
-                          className={`text-sm font-medium ${
-                            isCompleted
-                              ? "text-emerald-600"
-                              : hasSubmission
-                                ? "text-blue-600"
-                                : "text-gray-500"
-                          }`}
-                        >
-                          {isCompleted
-                            ? "Week completed"
-                            : hasSubmission
-                              ? "Assignment submitted"
-                              : "Assignment submission required"}
-                        </span>
-
-                        <button
-                          type="button"
-                          disabled={!hasSubmission && !isCompleted}
-                          onClick={() => toggleComplete(item.week)}
-                          className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
-                            isCompleted
-                              ? "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-                              : hasSubmission
-                                ? "bg-violet-600 text-white hover:bg-violet-700"
-                                : "cursor-not-allowed bg-gray-100 text-gray-400"
-                          }`}
-                        >
-                          {isCompleted ? (
-                            <>
-                              <FaRegCircle />
-                              Mark incomplete
-                            </>
-                          ) : hasSubmission ? (
-                            <>
-                              <FaCheck />
-                              Mark as completed
-                            </>
-                          ) : (
-                            <>
-                              <FaClock />
-                              Submit assignment first
-                            </>
-                          )}
-                        </button>
-                      </div>
+                        </>
+                      )}
                     </article>
                   );
                 })}
@@ -570,7 +638,8 @@ const Courses = () => {
               <button
                 type="button"
                 onClick={closeAssignment}
-                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                disabled={submitting}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
                 aria-label="Close assignment"
               >
                 ✕
@@ -589,7 +658,10 @@ const Courses = () => {
             </div>
 
             {/* Submission Form */}
-            <form onSubmit={handleAssignmentSubmit} className="mt-6 space-y-5">
+            <form
+              onSubmit={handleAssignmentSubmit}
+              className="mt-6 space-y-5"
+            >
               <div>
                 <label className="mb-2 block text-sm font-semibold text-gray-800">
                   Your submission
@@ -681,7 +753,8 @@ const Courses = () => {
                 <button
                   type="button"
                   onClick={closeAssignment}
-                  className="rounded-lg border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                  disabled={submitting}
+                  className="rounded-lg border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
