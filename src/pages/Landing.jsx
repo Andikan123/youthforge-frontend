@@ -55,60 +55,6 @@ const getInitials = (name = 'Student') =>
     .toUpperCase();
 
 // --------------------------------------------------
-// HARDCODED COMMUNITY POSTS
-// --------------------------------------------------
-
-const initialPosts = [
-  {
-    id: 1,
-    author: 'David Johnson',
-    role: 'Web Development Student',
-    initials: 'DJ',
-    profileImage: '',
-    content:
-      'Finally completed my first HTML project! It is amazing how a few lines of code can bring an idea to life. Looking forward to learning CSS next!',
-    category: 'Learning milestone',
-    time: '2 hours ago',
-    likes: 12,
-    liked: false,
-    comments: [
-      { id: 1, author: 'Sarah Williams', text: 'Congratulations! Keep going!' },
-      { id: 2, author: 'Michael James', text: 'Well done. CSS is going to be fun!' },
-    ],
-  },
-  {
-    id: 2,
-    author: 'Sarah Williams',
-    role: 'Beginner Developer',
-    initials: 'SW',
-    profileImage: '',
-    content:
-      'Something I learned today: HTML gives a webpage its structure, CSS makes it beautiful, and JavaScript makes it interactive. One step at a time. 🚀',
-    category: 'Learning',
-    time: '5 hours ago',
-    likes: 24,
-    liked: false,
-    comments: [
-      { id: 1, author: 'David Johnson', text: 'Perfect explanation!' },
-    ],
-  },
-  {
-    id: 3,
-    author: 'Michael James',
-    role: 'YouthForge Student',
-    initials: 'MJ',
-    profileImage: '',
-    content:
-      'A reminder to everyone learning something new: do not compare your beginning with someone else’s progress. Keep practising, keep asking questions, and keep building.',
-    category: 'Community discussion',
-    time: '1 day ago',
-    likes: 18,
-    liked: false,
-    comments: [],
-  },
-];
-
-// --------------------------------------------------
 // THE DIGITAL PULSE - SAMPLE NEWS
 // --------------------------------------------------
 
@@ -328,6 +274,45 @@ const Avatar = ({ image, name, initials, size = 'h-11 w-11' }) => (
   </div>
 );
 
+// Convert the API's MongoDB post shape into the shape used by this page.
+const formatPost = (post) => {
+  const author = post.author || {};
+  const authorName =
+    [author.firstName, author.lastName].filter(Boolean).join(' ') ||
+    author.name ||
+    'YouthForge Member';
+
+  return {
+    id: post._id,
+    author: authorName,
+    role: author.role || 'YouthForge Member',
+    initials: getInitials(authorName),
+    profileImage: author.profileImage || '',
+    content: post.content || '',
+    category: post.category || 'Community post',
+    time: post.createdAt
+      ? new Date(post.createdAt).toLocaleString()
+      : 'Recently',
+    likes: typeof post.likes === 'number' ? post.likes : (post.likes || []).length,
+    liked: Boolean(post.likedByMe),
+    comments: (post.comments || []).map((comment) => {
+      const commentAuthor = comment.author || {};
+      const commentAuthorName =
+        [commentAuthor.firstName, commentAuthor.lastName]
+          .filter(Boolean)
+          .join(' ') ||
+        commentAuthor.name ||
+        'YouthForge Member';
+
+      return {
+        id: comment._id,
+        author: commentAuthorName,
+        text: comment.text || '',
+      };
+    }),
+  };
+};
+
 // --------------------------------------------------
 // MAIN LANDING PAGE
 // --------------------------------------------------
@@ -338,7 +323,10 @@ const Landing = () => {
   const [user, setUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
-  const [posts, setPosts] = useState(initialPosts);
+  const [posts, setPosts] = useState([]);
+  const [loadingPosts, setLoadingPosts] = useState(true);
+  const [postError, setPostError] = useState('');
+  const [submittingPost, setSubmittingPost] = useState(false);
   const [postContent, setPostContent] = useState('');
   const [activeComments, setActiveComments] = useState(null);
   const [commentDrafts, setCommentDrafts] = useState({});
@@ -404,6 +392,32 @@ const Landing = () => {
     };
   }, [fetchUser]);
 
+  // Fetch community posts from the backend.
+  const fetchPosts = useCallback(async () => {
+    setLoadingPosts(true);
+    setPostError('');
+
+    try {
+      const response = await fetch(`${API_URL}/posts`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Unable to load community posts.');
+      }
+
+      setPosts((data.posts || []).map(formatPost));
+    } catch (error) {
+      console.error('Post retrieval error:', error);
+      setPostError(error.message || 'Unable to load community posts.');
+    } finally {
+      setLoadingPosts(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPosts();
+  }, [fetchPosts]);
+
   const displayName = user
     ? [user.firstName, user.lastName].filter(Boolean).join(' ') ||
       user.name ||
@@ -411,44 +425,87 @@ const Landing = () => {
       'Student'
     : 'Student';
 
-  // Create a post
-  const handleCreatePost = (event) => {
+  // Create a post and save it in MongoDB.
+  const handleCreatePost = async (event) => {
     event.preventDefault();
 
-    if (!user || !postContent.trim()) return;
+    const content = postContent.trim();
+    const token = localStorage.getItem('token');
 
-    const newPost = {
-      id: Date.now(),
-      author: displayName,
-      role: 'YouthForge Student',
-      initials: getInitials(displayName),
-      profileImage: user.profileImage || '',
-      content: postContent.trim(),
-      category: 'Community post',
-      time: 'Just now',
-      likes: 0,
-      liked: false,
-      comments: [],
-    };
+    if (!user || !content || !token || submittingPost) return;
 
-    setPosts((previous) => [newPost, ...previous]);
-    setPostContent('');
-    setFilter('All');
+    setSubmittingPost(true);
+    setPostError('');
+
+    try {
+      const response = await fetch(`${API_URL}/posts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          content,
+          category: 'Community post',
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Unable to publish your post.');
+      }
+
+      if (!data.post) {
+        throw new Error('The server did not return the created post.');
+      }
+
+      setPosts((previous) => [formatPost(data.post), ...previous]);
+      setPostContent('');
+      setFilter('All');
+    } catch (error) {
+      console.error('Create post error:', error);
+      setPostError(error.message || 'Unable to publish your post.');
+    } finally {
+      setSubmittingPost(false);
+    }
   };
 
-  // Like / unlike
-  const handleLike = (postId) => {
-    setPosts((previous) =>
-      previous.map((post) =>
-        post.id === postId
-          ? {
-              ...post,
-              liked: !post.liked,
-              likes: post.liked ? post.likes - 1 : post.likes + 1,
-            }
-          : post
-      )
-    );
+  // Like or unlike a post through the backend.
+  const handleLike = async (postId) => {
+    if (!user) return;
+
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/posts/${postId}/like`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Unable to update the like.');
+      }
+
+      setPosts((previous) =>
+        previous.map((post) =>
+          post.id === postId
+            ? {
+                ...post,
+                likes: data.likes,
+                liked: Boolean(data.likedByMe),
+              }
+            : post
+        )
+      );
+    } catch (error) {
+      console.error('Like error:', error);
+    }
   };
 
   // Toggle comments
@@ -458,37 +515,66 @@ const Landing = () => {
     );
   };
 
-  // Add comment
-  const handleAddComment = (event, postId) => {
+  // Add a comment and save it in MongoDB.
+  const handleAddComment = async (event, postId) => {
     event.preventDefault();
 
     if (!user) return;
 
     const commentText = commentDrafts[postId]?.trim();
+    const token = localStorage.getItem('token');
 
-    if (!commentText) return;
+    if (!commentText || !token) return;
 
-    const newComment = {
-      id: Date.now(),
-      author: displayName,
-      text: commentText,
-    };
+    try {
+      const response = await fetch(`${API_URL}/posts/${postId}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text: commentText }),
+      });
 
-    setPosts((previous) =>
-      previous.map((post) =>
-        post.id === postId
-          ? {
-              ...post,
-              comments: [...post.comments, newComment],
-            }
-          : post
-      )
-    );
+      const data = await response.json();
 
-    setCommentDrafts((previous) => ({
-      ...previous,
-      [postId]: '',
-    }));
+      if (!response.ok) {
+        throw new Error(data.message || 'Unable to add your comment.');
+      }
+
+      if (!data.comment) {
+        throw new Error('The server did not return the saved comment.');
+      }
+
+      const commentAuthor = data.comment.author || {};
+      const commentAuthorName =
+        [commentAuthor.firstName, commentAuthor.lastName]
+          .filter(Boolean)
+          .join(' ') ||
+        commentAuthor.name ||
+        displayName;
+
+      const newComment = {
+        id: data.comment._id,
+        author: commentAuthorName,
+        text: data.comment.text,
+      };
+
+      setPosts((previous) =>
+        previous.map((post) =>
+          post.id === postId
+            ? { ...post, comments: [...post.comments, newComment] }
+            : post
+        )
+      );
+
+      setCommentDrafts((previous) => ({
+        ...previous,
+        [postId]: '',
+      }));
+    } catch (error) {
+      console.error('Add comment error:', error);
+    }
   };
 
   // Save / unsave news
@@ -667,10 +753,10 @@ const Landing = () => {
 
                         <button
                           type="submit"
-                          disabled={!postContent.trim()}
+                          disabled={!postContent.trim() || submittingPost}
                           className="inline-flex items-center gap-2 rounded-lg bg-violet-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          Post <FaPaperPlane />
+                          {submittingPost ? 'Publishing...' : 'Post'} <FaPaperPlane />
                         </button>
                       </div>
                     </form>
@@ -756,7 +842,28 @@ const Landing = () => {
             {/* POSTS */}
             <div className="space-y-5">
 
-              {visiblePosts.map((post) => (
+              {loadingPosts ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+                  <p className="text-sm text-slate-500">Loading community posts...</p>
+                </div>
+              ) : postError ? (
+                <div className="rounded-2xl border border-red-200 bg-white p-8 text-center">
+                  <p className="font-semibold text-red-600">{postError}</p>
+                  <button
+                    type="button"
+                    onClick={fetchPosts}
+                    className="mt-3 text-sm font-semibold text-violet-700 hover:text-violet-900"
+                  >
+                    Try again
+                  </button>
+                </div>
+              ) : visiblePosts.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+                  <p className="font-semibold">No posts in this category yet.</p>
+                  <p className="mt-2 text-sm text-slate-500">Be the first to share something!</p>
+                </div>
+              ) : (
+                visiblePosts.map((post) => (
 
                 <article
                   key={post.id}
@@ -888,20 +995,7 @@ const Landing = () => {
                     )}
                   </div>
                 </article>
-              ))}
-
-              {visiblePosts.length === 0 && (
-                <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
-
-                  <p className="font-semibold">
-                    No posts in this category yet.
-                  </p>
-
-                  <p className="mt-2 text-sm text-slate-500">
-                    Be the first to share something!
-                  </p>
-
-                </div>
+                ))
               )}
             </div>
 

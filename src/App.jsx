@@ -14,6 +14,7 @@ import Profile from './pages/Profile';
 import Error from './pages/Error';
 import AdminNotifications from './pages/admin/AdminNotifications';
 import Notifications from './pages/Notifications';
+import AdminAssignments from './pages/admin/AdminAssignments';
 
 const router = createBrowserRouter([
   {
@@ -58,6 +59,11 @@ const router = createBrowserRouter([
   {
     path: '/admin/notifications',
     element: <AdminNotifications />,
+    errorElement: <Error />,
+  },
+  {
+    path: '/admin/assignment',
+    element: <AdminAssignments />,
     errorElement: <Error />,
   },
 ]);
